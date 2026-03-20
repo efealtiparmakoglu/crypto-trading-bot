@@ -1,0 +1,117 @@
+version: '3.8'
+
+services:
+  # Main Trading Bot
+  trading-bot:
+    build: .
+    container_name: crypto-trading-bot
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/trading_bot
+      - REDIS_URL=redis://redis:6379/0
+      - MODE=paper  # paper or live
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+    depends_on:
+      - db
+      - redis
+    command: python -m bot.trader --mode paper --config config/paper_trading.yml
+
+  # ML Training Service
+  ml-trainer:
+    build: .
+    container_name: crypto-ml-trainer
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/trading_bot
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    command: python -m bot.ml.train --schedule-daily
+    profiles:
+      - ml
+
+  # Web Dashboard API
+  web-api:
+    build: .
+    container_name: crypto-web-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/trading_bot
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET_KEY=your-secret-key
+    volumes:
+      - ./config:/app/config
+    depends_on:
+      - db
+      - redis
+    command: uvicorn web.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Sentiment Analyzer
+  sentiment-analyzer:
+    build: .
+    container_name: crypto-sentiment
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/trading_bot
+      - TWITTER_API_KEY=${TWITTER_API_KEY}
+      - TWITTER_API_SECRET=${TWITTER_API_SECRET}
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    command: python -m bot.sentiment.analyze --interval 300
+    profiles:
+      - sentiment
+
+  # Database
+  db:
+    image: postgres:15-alpine
+    container_name: crypto-trading-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=trading_bot
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: crypto-trading-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: crypto-trading-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana:/etc/grafana/provisioning
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: crypto-trading-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:
+  prometheus_data:
